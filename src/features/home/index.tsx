@@ -2,10 +2,43 @@
 import { WalletConnection } from "@/components/connector";
 import { useRelayer } from "@/hook/useRelayer";
 import { useOpenStore } from "@/store/useConnectionStore";
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useAccount } from "wagmi";
 
-// Données statiques
+interface SpecialImageData {
+  src: string;
+  probability: number;
+}
+
+interface SpecialImage extends SpecialImageData {
+  triggered: boolean;
+}
+
+interface SpecialImageOnScreen {
+  id: number;
+  src: string;
+  x: number;
+  y: number;
+}
+
+interface Track {
+  src: string;
+  lyrics: string[];
+}
+
+interface DiscoImageState {
+  src: string;
+  x: number;
+  y: number;
+}
+
+interface ZoneDimensions {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
 const DISCO_IMAGES = [
   { src: "image1.png", zone: 2 },
   { src: "image2.png", zone: 3 },
@@ -31,13 +64,12 @@ const SPECIAL_IMAGES_DATA = [
   { src: "special3.png", probability: 2 },
   { src: "special4.png", probability: 1 },
   { src: "special5.png", probability: 0.1 },
-  { src: "special6.png", probability: 0.01 },
-  { src: "special7.png", probability: 0.001 },
-  { src: "special8.png", probability: 0.0001 },
+  { src: "special6.png", probability: 0.3 },
+  { src: "special7.png", probability: 0.5 },
+  { src: "special8.png", probability: 0.7 },
 ];
 
-// Exemples de morceaux et lyrics
-const TRACKS = [
+const TRACKS: Track[] = [
   {
     src: "song1.mp3",
     lyrics: [
@@ -345,48 +377,51 @@ const BACKGROUND_COLORS = [
   "#F4C2F4",
 ];
 
-export const Home = () => {
-  const { address } = useAccount();
-  const { open, setOpen } = useOpenStore();
-  const [count, setCount] = useState(0);
-  const { click } = useRelayer();
-  const containerRef = useRef(null);
-  const dancefloorRef = useRef(null);
-  const dancefloorContainerRef = useRef(null);
-  const audioRef = useRef(null);
-  const twitterLogoRef = useRef(null);
+const useLastImageIndex = () => {
+  return useRef<{ [zone: number]: number }>({});
+};
 
-  // États pour le rendu dynamique
-  const [clickCount, setClickCount] = useState(0);
-  const [gridSize, setGridSize] = useState(window.innerWidth <= 768 ? 12 : 15);
-  const [tileColors, setTileColors] = useState(
+export const Home: React.FC = () => {
+  const { address } = useAccount();
+  const { setOpen } = useOpenStore();
+  const { click } = useRelayer();
+
+  // Références pour le conteneur principal et la grille du dancefloor
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dancefloorRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const lastImageIndexPerZone = useLastImageIndex();
+
+  const [clickCount, setClickCount] = useState<number>(0);
+  const [gridSize, setGridSize] = useState<number>(
+    window.innerWidth <= 768 ? 12 : 15
+  );
+  const [tileColors, setTileColors] = useState<string[]>(
     Array.from(
       { length: gridSize * gridSize },
       () => TILE_COLORS[Math.floor(Math.random() * TILE_COLORS.length)]
     )
   );
-  const [backgroundGradient, setBackgroundGradient] = useState(
-    "linear-gradient(30deg, #836EF9, #FF00FF"
+  const [backgroundGradient, setBackgroundGradient] = useState<string>(
+    "linear-gradient(30deg, #836EF9, #FF00FF)"
   );
-  const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
-  const [collectionImages, setCollectionImages] = useState([]);
-  const [discoImage, setDiscoImage] = useState(null);
-  const [specialImagesOnScreen, setSpecialImagesOnScreen] = useState([]);
-  const [showPopup, setShowPopup] = useState(true);
+  const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(0);
+  const [collectionImages, setCollectionImages] = useState<string[]>([]);
+  const [discoImage, setDiscoImage] = useState<DiscoImageState | null>(null);
+  const [specialImagesOnScreen, setSpecialImagesOnScreen] = useState<
+    SpecialImageOnScreen[]
+  >([]);
+  const [showPopup, setShowPopup] = useState<boolean>(true);
 
-  // Pour mémoriser la dernière image disco affichée
-  const lastDiscoImageRef = useRef(null);
-  // Pour stocker l’état des images spéciales (triggered)
-  const specialImagesRef = useRef(
+  const specialImagesRef = useRef<SpecialImage[]>(
     SPECIAL_IMAGES_DATA.map((img) => ({ ...img, triggered: false }))
   );
 
-  // Mise à jour du nombre de colonnes en cas de redimensionnement
   useEffect(() => {
     const handleResize = () => {
       const newSize = window.innerWidth <= 768 ? 12 : 15;
       setGridSize(newSize);
-      // Régénérer des couleurs aléatoires pour chaque tuile
       setTileColors(
         Array.from(
           { length: newSize * newSize },
@@ -398,8 +433,7 @@ export const Home = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Fonctions utilitaires
-  const getRandomColor = useCallback((colors) => {
+  const getRandomColor = useCallback((colors: string[]): string => {
     return colors[Math.floor(Math.random() * colors.length)];
   }, []);
 
@@ -418,14 +452,14 @@ export const Home = () => {
     setBackgroundGradient(`linear-gradient(${angle}deg, ${color1}, ${color2})`);
   };
 
-  // Calcule les dimensions d'une zone en fonction du numéro
-  const getZoneDimensions = (zoneNumber) => {
-    if (!dancefloorContainerRef.current) return null;
-    const rect = dancefloorContainerRef.current.getBoundingClientRect();
+  // Calcule les dimensions (en viewport) d'une zone sur la grille
+  const getZoneDimensions = (zoneNumber: number): ZoneDimensions | null => {
+    if (!dancefloorRef.current) return null;
+    const rect = dancefloorRef.current.getBoundingClientRect();
     const zoneHeight = rect.height / 3;
     const verticalShift = 20;
     const extraUpShift = 40;
-    const zone = {
+    const zone: ZoneDimensions = {
       top: rect.top - verticalShift - extraUpShift,
       left: rect.left,
       width: rect.width,
@@ -448,53 +482,55 @@ export const Home = () => {
     return zone;
   };
 
-  // Crée et positionne une image disco unique
   const createSingleImage = () => {
     const zoneNumber = Math.floor(Math.random() * 3) + 1;
     const zone = getZoneDimensions(zoneNumber);
-    if (!zone) return;
+    if (!zone || !dancefloorRef.current || !containerRef.current) return;
     const availableImages = DISCO_IMAGES.filter(
       (img) => img.zone === zoneNumber
     );
-    let chosenImage;
-    if (availableImages.length > 1) {
-      do {
-        chosenImage =
-          availableImages[Math.floor(Math.random() * availableImages.length)];
-      } while (chosenImage.src === lastDiscoImageRef.current);
+
+    if (lastImageIndexPerZone.current[zoneNumber] === undefined) {
+      lastImageIndexPerZone.current[zoneNumber] = 0;
     } else {
-      chosenImage = availableImages[0];
+      lastImageIndexPerZone.current[zoneNumber] =
+        (lastImageIndexPerZone.current[zoneNumber] + 1) %
+        availableImages.length;
     }
-    lastDiscoImageRef.current = chosenImage.src;
+    const chosenImage =
+      availableImages[lastImageIndexPerZone.current[zoneNumber]];
+
     const imgWidth = 250;
-    const imgHeight = 250;
+    const imgHeight = 135;
     const randomFactor = 1 - Math.pow(Math.random(), 2);
+    // Calcul en viewport basé sur la zone
     const randomX =
       zone.left + randomFactor * Math.max(0, zone.width - imgWidth);
     const randomY =
       zone.top + Math.random() * Math.max(0, zone.height - imgHeight);
+    // Conversion en coordonnées relatives au conteneur principal
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const relativeX = randomX - containerRect.left;
+    const relativeY = randomY - containerRect.top;
     setDiscoImage({
       src: chosenImage.src,
-      left: randomX,
-      top: randomY,
+      x: relativeX,
+      y: relativeY, // ajustement vertical
     });
   };
 
-  // Tente de générer des images spéciales
   const spawnSpecialImages = () => {
     specialImagesRef.current.forEach((special, index) => {
       if (!special.triggered && Math.random() * 100 < special.probability) {
-        // Marquer comme déclenchée
         specialImagesRef.current[index].triggered = true;
         createSpecialImage(special);
       }
     });
   };
 
-  // Crée une image spéciale et la rend cliquable
-  const createSpecialImage = (special) => {
+  const createSpecialImage = (special: SpecialImage) => {
     const zone = getZoneDimensions(3);
-    if (!zone) return;
+    if (!zone || !dancefloorRef.current || !containerRef.current) return;
     const imgWidth = 200;
     const imgHeight = 200;
     const randomFactor = 1 - Math.pow(Math.random(), 2);
@@ -502,15 +538,16 @@ export const Home = () => {
       zone.left + randomFactor * Math.max(0, zone.width - imgWidth);
     const randomY =
       zone.top + Math.random() * Math.max(0, zone.height - imgHeight);
-    // Créer un objet représentant l'image spéciale
-    const specialObj = {
-      id: Date.now() + Math.random(),
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const relativeX = randomX - containerRect.left;
+    const relativeY = randomY - containerRect.top;
+    const specialObj: SpecialImageOnScreen = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
       src: special.src,
-      left: randomX,
-      top: randomY,
+      x: relativeX,
+      y: relativeY,
     };
     setSpecialImagesOnScreen((prev) => [...prev, specialObj]);
-    // Supprimer l'image après 5 secondes si non collectée
     setTimeout(() => {
       setSpecialImagesOnScreen((prev) =>
         prev.filter((img) => img.id !== specialObj.id)
@@ -518,14 +555,16 @@ export const Home = () => {
     }, 5000);
   };
 
-  // Lorsqu'une image spéciale est cliquée, on la collecte
-  const collectSpecialImage = (id, src, e) => {
+  const collectSpecialImage = (
+    id: number,
+    src: string,
+    e: React.MouseEvent<HTMLImageElement, MouseEvent>
+  ) => {
     e.stopPropagation();
     setSpecialImagesOnScreen((prev) => prev.filter((img) => img.id !== id));
     setCollectionImages((prev) => [...prev, src]);
   };
 
-  // Gestion du clic principal sur le container
   const handleContainerClick = async () => {
     if (!address) {
       setOpen(true);
@@ -539,43 +578,42 @@ export const Home = () => {
     click(address as `0x${string}`);
   };
 
-  // Gestion de la musique
-  const handleMusicToggle = (e) => {
+  const handleMusicToggle = (
+    e: React.MouseEvent<HTMLButtonElement, MouseEvent>
+  ) => {
     e.stopPropagation();
     if (!audioRef.current) return;
     if (audioRef.current.paused) {
-      audioRef.current
-        .play()
-        .then(() => {})
-        .catch((err) => console.error(err));
+      audioRef.current.play().catch((err) => console.error(err));
     } else {
       audioRef.current.pause();
     }
   };
 
-  const handleNextTrack = (e) => {
+  const handleNextTrack = (
+    e: React.MouseEvent<HTMLButtonElement, MouseEvent>
+  ) => {
     e.stopPropagation();
     setCurrentTrackIndex((prev) => (prev + 1) % TRACKS.length);
   };
 
-  const handlePrevTrack = (e) => {
+  const handlePrevTrack = (
+    e: React.MouseEvent<HTMLButtonElement, MouseEvent>
+  ) => {
     e.stopPropagation();
     setCurrentTrackIndex((prev) => (prev - 1 + TRACKS.length) % TRACKS.length);
   };
 
-  // Lors du changement de morceau, mettre à jour la source audio et relancer la lecture
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.src = TRACKS[currentTrackIndex].src;
-      audioRef.current
-        .play()
-        .then(() => {})
-        .catch((err) => console.error(err));
+      audioRef.current.play().catch((err) => console.error(err));
     }
   }, [currentTrackIndex]);
 
-  // Empêcher la propagation du clic sur le logo Twitter
-  const handleTwitterLogoClick = (e) => {
+  const handleTwitterLogoClick = (
+    e: React.MouseEvent<HTMLAnchorElement, MouseEvent>
+  ) => {
     e.stopPropagation();
   };
 
@@ -588,18 +626,12 @@ export const Home = () => {
           margin: 0,
           minHeight: "100vh",
           width: "100vw",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          transition: "background-color 0.3s",
+          position: "relative",
           background: backgroundGradient || "black",
           overflow: "hidden",
-          position: "relative",
         }}
         onClick={handleContainerClick}
       >
-        {/* Pop-up de bienvenue */}
         {showPopup && (
           <div
             id="popup-overlay"
@@ -613,7 +645,7 @@ export const Home = () => {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              zIndex: 10,
+              zIndex: 10000,
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -632,10 +664,10 @@ export const Home = () => {
               }}
             >
               <h1 style={{ margin: "0 0 20px", fontSize: "32px" }}>
-                Discomon is Here to Get You Moving !
+                Discomon is Here to Get You Moving!
               </h1>
               <p>Are you ready to lose yourself on the dance floor?</p>
-              <p>Crank up the volume to the max and let the beat groove!</p>
+              <p>Crank up the volume and let the beat groove!</p>
               <p>
                 Click on the screen to make us dance, and collect the 8 special
                 partygoers that will join the party!
@@ -645,13 +677,12 @@ export const Home = () => {
                 week!
               </p>
               <p>
-                So now, show Mon Travolta you're better than him by unleashing
-                our best choreography! Stress the testnet to the beat of Disco!
+                So now, show Mon Travolta you&apos;re better than him by
+                unleashing our best choreography!
               </p>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  console.log("Start Game cliqué");
                   setShowPopup(false);
                   handleContainerClick();
                 }}
@@ -663,7 +694,6 @@ export const Home = () => {
                   padding: "10px 20px",
                   borderRadius: "5px",
                   cursor: "pointer",
-                  zIndex: "10000",
                   boxShadow: "0 0 10px #FF00FF, 0 0 20px #FF00FF",
                 }}
               >
@@ -672,8 +702,6 @@ export const Home = () => {
             </div>
           </div>
         )}
-
-        {/* Image en haut à gauche */}
         <img
           src="Encart.png"
           alt="Votre Description"
@@ -683,30 +711,27 @@ export const Home = () => {
             top: 20,
             left: 20,
             width: 240,
-            zIndex: 10,
+            zIndex: 1000,
           }}
           onClick={(e) => e.stopPropagation()}
         />
-
-        {/* Logo Disco en haut-centre */}
         <img
           src="discologo.png"
           alt="Logo Disco"
           className="header-image"
           style={{
-            width: "25vw",
-            minWidth: 150,
-            maxWidth: 300,
             position: "absolute",
             top: 0,
             left: "50%",
             transform: "translateX(-50%)",
-            zIndex: 2,
+            width: "25vw",
+            minWidth: 150,
+            maxWidth: 300,
+            zIndex: 900,
           }}
           onClick={(e) => e.stopPropagation()}
         />
-
-        {/* Container du dancefloor */}
+        {/* Conteneur du dancefloor transformé */}
         <div
           className="main-container"
           style={{
@@ -722,15 +747,15 @@ export const Home = () => {
         >
           <div
             className="dancefloor-container"
-            ref={dancefloorContainerRef}
             style={{
+              position: "relative",
               transform: "rotateX(75deg)",
               transformStyle: "preserve-3d",
               width: "min(95vh,95vw)",
               height: "min(95vh,95vw)",
-              position: "relative",
             }}
           >
+            {/* Grille du dancefloor */}
             <div
               className="dancefloor"
               ref={dancefloorRef}
@@ -743,9 +768,9 @@ export const Home = () => {
                 backgroundColor: "black",
                 padding: "0.3%",
                 position: "relative",
+                zIndex: 1,
               }}
             >
-              {/* Génération des tuiles */}
               {Array.from({ length: gridSize * gridSize }).map((_, i) => (
                 <div
                   key={i}
@@ -756,12 +781,12 @@ export const Home = () => {
                     border: "1px solid rgba(255,255,255,0.2)",
                     transition: "background-color 0.3s",
                     aspectRatio: "1",
+                    zIndex: 1,
                   }}
                 >
                   {i < gridSize && (
                     <div
                       style={{
-                        content: "",
                         position: "absolute",
                         width: "100%",
                         height: 20,
@@ -775,51 +800,46 @@ export const Home = () => {
                   )}
                 </div>
               ))}
-              {/* Représentation du "disco image" */}
-              {discoImage && (
-                <img
-                  src={discoImage.src}
-                  alt="Disco"
-                  className="disco-image"
-                  style={{
-                    position: "fixed",
-                    transform: "translate(-50%, -50%)",
-                    zIndex: 3,
-                    pointerEvents: "none",
-                    width: 250,
-                    height: 250,
-                    objectFit: "contain",
-                    left: discoImage.left,
-                    top: discoImage.top,
-                  }}
-                />
-              )}
-              {/* Images spéciales */}
-              {specialImagesOnScreen.map((img) => (
-                <img
-                  key={img.id}
-                  src={img.src}
-                  alt="Special"
-                  className="special-image"
-                  style={{
-                    position: "fixed",
-                    transform: "translate(-50%, -50%)",
-                    zIndex: 4,
-                    cursor: "pointer",
-                    width: 200,
-                    height: 200,
-                    objectFit: "contain",
-                    left: img.left,
-                    top: img.top,
-                  }}
-                  onClick={(e) => collectSpecialImage(img.id, img.src, e)}
-                />
-              ))}
             </div>
           </div>
         </div>
-
-        {/* Compteur de clics */}
+        {/* Overlay pour les images, placé directement dans le conteneur principal */}
+        {discoImage && (
+          <img
+            src={discoImage.src}
+            alt="Disco"
+            style={{
+              position: "absolute",
+              transform: "translate(-50%, -50%)",
+              zIndex: 9999,
+              width: 250,
+              height: "auto",
+              objectFit: "contain",
+              left: discoImage.x,
+              top: discoImage.y,
+              pointerEvents: "none",
+            }}
+          />
+        )}
+        {specialImagesOnScreen.map((img) => (
+          <img
+            key={img.id}
+            src={img.src}
+            alt="Special"
+            style={{
+              position: "absolute",
+              transform: "translate(-50%, -50%)",
+              zIndex: 9999,
+              cursor: "pointer",
+              width: 200,
+              height: "auto",
+              objectFit: "contain",
+              left: img.x,
+              top: img.y,
+            }}
+            onClick={(e) => collectSpecialImage(img.id, img.src, e)}
+          />
+        ))}
         <div
           id="tx-counter"
           style={{
@@ -834,14 +854,12 @@ export const Home = () => {
             fontFamily: "'Luckiest Guy', cursive",
             fontSize: 20,
             textAlign: "center",
-            zIndex: 6,
+            zIndex: 10000,
           }}
           onClick={(e) => e.stopPropagation()}
         >
           tx number: {clickCount}
         </div>
-
-        {/* Zone de collecte */}
         <div
           id="collection"
           style={{
@@ -854,7 +872,7 @@ export const Home = () => {
             height: 450,
             padding: 10,
             borderRadius: 5,
-            zIndex: 5,
+            zIndex: 10000,
             display: "flex",
             flexDirection: "column",
             boxSizing: "border-box",
@@ -900,8 +918,6 @@ export const Home = () => {
             ))}
           </div>
         </div>
-
-        {/* Conteneur des boutons musique */}
         <div
           id="music-container"
           style={{
@@ -912,7 +928,7 @@ export const Home = () => {
             display: "flex",
             justifyContent: "center",
             gap: 10,
-            zIndex: 5,
+            zIndex: 10000,
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -962,8 +978,6 @@ export const Home = () => {
             ⏭
           </button>
         </div>
-
-        {/* Zone Lyrics */}
         <div
           id="lyrics"
           style={{
@@ -976,7 +990,7 @@ export const Home = () => {
             height: 450,
             padding: 10,
             borderRadius: 5,
-            zIndex: 5,
+            zIndex: 1000000,
             display: "flex",
             flexDirection: "column",
             boxSizing: "border-box",
@@ -1008,44 +1022,36 @@ export const Home = () => {
             {TRACKS[currentTrackIndex].lyrics.join("\n")}
           </div>
         </div>
-
-        {/* Élément audio */}
         <audio ref={audioRef} loop style={{ display: "none" }} />
-
-        {/* Logo Twitter */}
         <a
           href="https://twitter.com/VotreCompteTwitter"
           target="_blank"
           rel="noopener noreferrer"
           id="twitter-logo"
-          ref={twitterLogoRef}
           onClick={handleTwitterLogoClick}
           style={{
             position: "fixed",
             bottom: 20,
             left: "50%",
             transform: "translateX(-50%)",
-            zIndex: 10,
+            zIndex: 10000,
           }}
         >
           <img src="twitter-logo.png" alt="Twitter" style={{ width: 50 }} />
         </a>
-
-        {/* Insertion du CSS global (optionnel) */}
         <style>{`
-        /* Vous pouvez déplacer ce CSS dans un fichier séparé */
-        .tile.first-row::after {
-          content: '';
-          position: absolute;
-          width: 100%;
-          height: 20px;
-          background-color: inherit;
-          bottom: -20px;
-          transform: rotateX(-90deg);
-          transform-origin: top;
-          filter: brightness(0.7);
-        }
-      `}</style>
+          .tile.first-row::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 20px;
+            background-color: inherit;
+            bottom: -20px;
+            transform: rotateX(-90deg);
+            transform-origin: top;
+            filter: brightness(0.7);
+          }
+        `}</style>
       </div>
     </>
   );
